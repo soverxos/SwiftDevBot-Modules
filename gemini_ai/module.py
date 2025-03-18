@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 router = Router()
 logger = logging.getLogger("modules.gemini_ai")
 data = None
-GEMINI_KEY = None  # Токен будет загружаться из .env
+GEMINI_KEY = None
 
 def setup(d):
     global data, DB_PATH, CONTEXT_PATH, GEMINI_KEY
@@ -19,7 +19,6 @@ def setup(d):
     data = d
     DB_PATH = os.path.join(data["base_dir"], "data", "cache.db")
     CONTEXT_PATH = os.path.join(data["base_dir"], "data", "swiftdevbot_context.txt")
-    # Загружаем токен из .env
     env_path = os.path.join(data["base_dir"], ".env")
     load_dotenv(env_path)
     GEMINI_KEY = os.getenv("GEMINI_KEY")
