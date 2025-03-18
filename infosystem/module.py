@@ -22,7 +22,7 @@ cache = {"cpu": None, "memory": None, "disk": None}
 cache_timeout = 60
 LOGS_PER_PAGE = 5
 LOGS_CACHE = {"logs": [], "last_updated": 0}
-LOGS_CACHE_TIMEOUT = 60  # 60 секунд
+LOGS_CACHE_TIMEOUT = 60
 
 async def update_cache():
     while True:
@@ -321,7 +321,7 @@ async def info_callback(callback: types.CallbackQuery):
     elif callback.data == "info_restart":
         await callback.message.edit_text("🔁 Бот перезапускается...", reply_markup=None)
         save_info_message(callback.message.chat.id, callback.message.message_id)
-        await callback.answer()  # Завершаем callback
+        await callback.answer()
         logger.info("Перезапуск бота через callback info_restart...")
         sys.exit(0)
     elif callback.data == "info_refresh":
@@ -333,8 +333,8 @@ async def info_callback(callback: types.CallbackQuery):
 
 async def on_startup(d):
     logger.info("🚀 Модуль InfoSystem запущен.")
-    asyncio.create_task(update_cache())       # Запускаем задачу кэширования здесь
-    asyncio.create_task(update_logs_cache())  # Запускаем задачу кэширования здесь
+    asyncio.create_task(update_cache())
+    asyncio.create_task(update_logs_cache())
     bot = d["bot"]
     saved_message = load_info_message()
     if saved_message:
