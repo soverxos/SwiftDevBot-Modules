@@ -12,6 +12,8 @@ router = Router()
 logger = logging.getLogger("modules.gemini_ai")
 data = None
 GEMINI_KEY = None
+DB_PATH = None
+CONTEXT_PATH = None
 
 def setup(d):
     global data, DB_PATH, CONTEXT_PATH, GEMINI_KEY
@@ -26,7 +28,6 @@ def setup(d):
         logger.error("GEMINI_KEY не найден в .env!")
         raise ValueError("GEMINI_KEY must be set in .env")
     dp.include_router(router)
-    asyncio.create_task(init_db())
     logger.info("🛠 Модуль GeminiAI настроен")
 
 def get_commands():
@@ -36,8 +37,6 @@ def get_commands():
     ]
 
 async def init_db():
-    if not os.path.exists(os.path.dirname(DB_PATH)):
-        os.makedirs(os.path.dirname(DB_PATH))
     async with data["db"] as db:
         await db.execute('''CREATE TABLE IF NOT EXISTS cache 
                             (question TEXT PRIMARY KEY, answer TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
@@ -48,7 +47,7 @@ async def init_db():
         await db.execute('''CREATE TABLE IF NOT EXISTS rate_limit 
                             (chat_id INTEGER PRIMARY KEY, last_request TIMESTAMP)''')
         await db.commit()
-    logger.info("📊 База данных создана или обновлена")
+    logger.info("📊 Таблицы базы данных для GeminiAI созданы или обновлены")
 
 def get_reply_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -182,12 +181,13 @@ async def clear_cache_command(message: types.Message):
         return
     async with data["db"] as db:
         await db.execute("DELETE FROM cache WHERE timestamp < datetime('now', '-7 days')")
-        deleted = db.total_changes
         await db.commit()
+        deleted = db.total_changes
     await message.answer(f"🧹 Удалено {deleted} старых записей из кэша.")
     logger.info(f"Кэш очищен администратором {message.from_user.id}, удалено {deleted} записей")
 
 async def on_startup(d):
+    await init_db()  # Инициализируем таблицы при старте
     logger.info("🚀 Модуль GeminiAI запущен.")
 
 async def on_shutdown(d):
