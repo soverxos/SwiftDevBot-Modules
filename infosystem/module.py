@@ -1,5 +1,5 @@
 from aiogram import Router, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 import logging
 import psutil
@@ -7,62 +7,44 @@ import platform
 import subprocess
 import sys
 import os
-import socket
-import json
 import asyncio
+import requests
 from datetime import datetime
 
 router = Router()
 logger = logging.getLogger("modules.infosystem")
 data = None
-message_count = 0
-INFO_MESSAGE_FILE = None
-LOG_FILE = None
+message_count = 0  # Счетчик сообщений для статистики
 cache = {"cpu": None, "memory": None, "disk": None}
-cache_timeout = 60
-LOGS_PER_PAGE = 5
-LOGS_CACHE = {"logs": [], "last_updated": 0}
-LOGS_CACHE_TIMEOUT = 60  # 60 секунд
+cache_timeout = 60  # Кэш обновляется каждые 60 секунд
 
 async def update_cache():
+    """Обновление кэша данных CPU, RAM, ROM"""
     while True:
         cache["cpu"] = psutil.cpu_percent(interval=0.1)
         cache["memory"] = psutil.virtual_memory().percent
         cache["disk"] = psutil.disk_usage('/').percent
-        if cache["memory"] > 90:
-            await data["bot"].send_message(data["admin_ids"][0], "⚠️ Память заполнена более чем на 90%!")
-        if cache["disk"] > 95:
-            await data["bot"].send_message(data["admin_ids"][0], "⚠️ Диск заполнен более чем на 95%!")
         await asyncio.sleep(cache_timeout)
 
-async def update_logs_cache():
-    global LOGS_CACHE
-    while True:
-        if os.path.exists(LOG_FILE):
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
-                LOGS_CACHE["logs"] = f.read().splitlines()
-            LOGS_CACHE["last_updated"] = datetime.now().timestamp()
-            logger.info("Логи закэшированы в памяти")
-        await asyncio.sleep(LOGS_CACHE_TIMEOUT)
-
 def setup(d):
-    global data, INFO_MESSAGE_FILE, LOG_FILE
+    """Настройка модуля"""
+    global data
     dp = d["dp"]
     data = d
-    INFO_MESSAGE_FILE = os.path.join(data["base_dir"], "data", "info_message.json")
-    LOG_FILE = os.path.join(data["base_dir"], "data", "logs.txt")
     dp.include_router(router)
+    # Регистрируем фоновую задачу для обновления кэша
+    data["background_tasks"].append(update_cache)
     logger.info("🛠 Модуль InfoSystem настроен")
 
 def get_commands():
+    """Список команд модуля"""
     return [
-        types.BotCommand(command="/info", description="ℹ️ Показать системную информацию"),
-        types.BotCommand(command="/botstats", description="📊 Статистика бота"),
-        types.BotCommand(command="/restartbot", description="🔁 Перезапустить бота (админ)"),
-        types.BotCommand(command="/resetstats", description="🔄 Сбросить статистику (админ)")
+        types.BotCommand(command="/info", description="ℹ️ Системная информация"),
+        types.BotCommand(command="/botstats", description="📊 Статистика бота")
     ]
 
 def is_docker():
+    """Проверка, работает ли бот в Docker"""
     try:
         with open("/proc/1/cgroup", "r") as f:
             return "docker" in f.read()
@@ -70,203 +52,225 @@ def is_docker():
         return False
 
 def is_wsl():
+    """Проверка, работает ли бот в WSL"""
     return "microsoft" in platform.uname().release.lower()
 
-def save_info_message(chat_id, message_id):
-    with open(INFO_MESSAGE_FILE, "w", encoding="utf-8") as f:
-        json.dump({"chat_id": chat_id, "message_id": message_id}, f)
-    logger.info(f"Сохранён message_id {message_id} для chat_id {chat_id}")
-
-def load_info_message():
-    if os.path.exists(INFO_MESSAGE_FILE):
-        with open(INFO_MESSAGE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return None
-
 def get_cpu_info():
-    cpu_cores = psutil.cpu_count(logical=True)
-    cpu_physical = psutil.cpu_count(logical=False)
-    return f"🖥 ЦП:\n⚡ Использование: {cache['cpu']}%\n🧩 Логические ядра: {cpu_cores}\n🔩 Физические ядра: {cpu_physical}"
+    """Информация о CPU с характеристиками"""
+    cpu_usage = cache["cpu"]
+    cpu_model = platform.processor() or "Неизвестно"
+    cpu_freq = psutil.cpu_freq()
+    freq_info = f"{cpu_freq.current:.2f} МГц" if cpu_freq else "Н/Д"
+    cores = psutil.cpu_count(logical=True)
+    physical_cores = psutil.cpu_count(logical=False)
+    return (f"🖥 ЦП:\n"
+            f"⚡ Использование: {cpu_usage}%\n"
+            f"🧩 Модель: {cpu_model}\n"
+            f"⏱ Частота: {freq_info}\n"
+            f"🔢 Ядер: {cores} (физических: {physical_cores})")
 
 def get_memory_info():
+    """Информация о RAM"""
     memory = psutil.virtual_memory()
-    total = memory.total / (1024 ** 3)
+    total = memory.total / (1024 ** 3)  # ГБ
     used = memory.used / (1024 ** 3)
     free = memory.available / (1024 ** 3)
-    return f"💾 Память:\n📈 Использовано: {cache['memory']}%\n📦 Всего: {total:.2f} ГБ\n📈 Использовано: {used:.2f} ГБ\n📉 Свободно: {free:.2f} ГБ"
+    return (f"💾 Память:\n"
+            f"📈 Использовано: {cache['memory']}%\n"
+            f"📦 Всего: {total:.2f} ГБ\n"
+            f"📈 Использовано: {used:.2f} ГБ\n"
+            f"📉 Свободно: {free:.2f} ГБ")
 
 def get_disk_info():
+    """Информация о ROM (диске)"""
     disk = psutil.disk_usage('/')
-    total = disk.total / (1024 ** 3)
+    total = disk.total / (1024 ** 3)  # ГБ
     used = disk.used / (1024 ** 3)
     free = disk.free / (1024 ** 3)
-    return f"📀 Диск (/):\n📈 Использовано: {cache['disk']}%\n📦 Всего: {total:.2f} ГБ\n📈 Использовано: {used:.2f} ГБ\n📉 Свободно: {free:.2f} ГБ"
+    return (f"📀 Диск (/):\n"
+            f"📈 Использовано: {cache['disk']}%\n"
+            f"📦 Всего: {total:.2f} ГБ\n"
+            f"📈 Использовано: {used:.2f} ГБ\n"
+            f"📉 Свободно: {free:.2f} ГБ")
 
 def get_system_info():
-    os_name = platform.system()
-    os_version = platform.release()
-    hostname = platform.node()
-    uptime = datetime.now() - datetime.fromtimestamp(psutil.boot_time())
+    """Информация об окружении"""
     env = "Docker" if is_docker() else "WSL" if is_wsl() else "Native OS"
-    return f"🛠 Система:\n🖥 ОС: {os_name} {os_version}\n🖧 Хост: {hostname}\n🌍 Окружение: {env}\n⏳ Время работы: {str(uptime).split('.')[0]}"
+    return f"🛠 Окружение:\n🌍 Тип: {env}"
 
 def get_network_info():
+    """Информация о сети с внешним и внутренним IP"""
     net_io = psutil.net_io_counters()
-    bytes_sent = net_io.bytes_sent / (1024 ** 2)
-    bytes_recv = net_io.bytes_recv / (1024 ** 2)
+    bytes_sent = net_io.bytes_sent / (1024 ** 2)  # МБ
+    bytes_recv = net_io.bytes_recv / (1024 ** 2)  # МБ
+    try:
+        external_ip = requests.get("https://api.ipify.org", timeout=5).text
+    except Exception as e:
+        external_ip = f"Ошибка ({e})"
+    
+    # Получаем внутренние IP-адреса
     interfaces = psutil.net_if_addrs()
-    ip_info = ""
+    internal_network = ""
     for iface, addrs in interfaces.items():
         for addr in addrs:
-            if addr.family == socket.AF_INET:
-                ip_info += f"{iface}: {addr.address}\n"
-    try:
-        connections = len(psutil.net_connections()) if not is_docker() else "N/A (Docker)"
-    except psutil.AccessDenied:
-        connections = "N/A (нет доступа)"
-    return f"🌐 Сеть:\n📤 Отправлено: {bytes_sent:.2f} МБ\n📥 Получено: {bytes_recv:.2f} МБ\n🖧 IP-адреса:\n{ip_info}🔗 Активных соединений: {connections}"
+            if addr.family == 2:  # AF_INET (IPv4)
+                internal_network += f"{iface}: {addr.address}\n"
+    internal_network = internal_network.strip() or "Нет данных"
 
-def get_temp_info():
-    if is_docker() or is_wsl():
-        return "🌡️ Температура: недоступно в Docker/WSL"
-    try:
-        temp = psutil.sensors_temperatures()
-        if not temp:
-            return "🌡️ Температура: данные недоступны (установите lm-sensors)"
-        cpu_temp = temp.get('coretemp', temp.get('cpu_thermal', []))
-        if cpu_temp:
-            return f"🌡️ Температура ЦП: {cpu_temp[0].current}°C"
-        return "🌡️ Температура: данные недоступны"
-    except Exception as e:
-        return f"🌡️ Температура: ошибка ({e})"
-
-def get_processes_info():
-    try:
-        processes = sorted(psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']), 
-                           key=lambda p: p.info['cpu_percent'], reverse=True)[:5]
-        result = "⚙️ Топ-5 процессов:\n"
-        for proc in processes:
-            result += f"PID: {proc.info['pid']} | {proc.info['name']} | ЦП: {proc.info['cpu_percent']:.1f}% | RAM: {proc.info['memory_percent']:.1f}%\n"
-        return result
-    except psutil.AccessDenied:
-        return "⚙️ Процессы: нет доступа (Docker/WSL ограничения)"
-
-def get_bot_stats():
-    global message_count
-    uptime = datetime.now() - data["start_time"]
-    return f"🤖 Статистика бота:\n⏳ Время работы: {str(uptime).split('.')[0]}\n📨 Обработано сообщений: {message_count}"
-
-def get_system_logs(page=0):
-    try:
-        if LOGS_CACHE["logs"]:
-            logs = LOGS_CACHE["logs"]
-            total_pages = (len(logs) - 1) // LOGS_PER_PAGE + 1
-            start = page * LOGS_PER_PAGE
-            end = start + LOGS_PER_PAGE
-            recent_logs = "\n".join(logs[start:end])
-            return f"📜 Логи бота (страница {page + 1} из {total_pages}):\n{recent_logs}", total_pages
-        else:
-            return "📜 Логи бота: файл logs.txt отсутствует или ещё не закэширован", 1
-    except Exception as e:
-        return f"📜 Логи бота: ошибка ({e})", 1
+    return (f"🌐 Сеть:\n"
+            f"📤 Отправлено: {bytes_sent:.2f} МБ\n"
+            f"📥 Получено: {bytes_recv:.2f} МБ\n"
+            f"🌍 Внешний IP: {external_ip}\n"
+            f"🖧 Внутренняя сеть:\n{internal_network}")
 
 def get_os_updates():
+    """Проверка и установка обновлений для различных UNIX-систем"""
     os_name = platform.system().lower()
+    if "linux" not in os_name and "darwin" not in os_name and "bsd" not in os_name:
+        return "Обновления: поддерживаются только UNIX-системы"
+
     try:
-        if "ubuntu" in os_name or "debian" in os_name:
-            subprocess.run(["apt-get", "update"], capture_output=True, text=True, check=True)
-            result = subprocess.run(["apt", "list", "--upgradable"], capture_output=True, text=True)
-            updates = result.stdout.splitlines()
-        elif "centos" in os_name or "fedora" in os_name or "rhel" in os_name:
-            pkg_manager = "dnf" if os.path.exists("/usr/bin/dnf") else "yum"
-            result = subprocess.run([pkg_manager, "check-update"], capture_output=True, text=True)
-            updates = [line for line in result.stdout.splitlines() if line and not line.startswith(("Last", "Security"))]
-        else:
-            return "📦 Обновления ОС: ОС не поддерживается (только Ubuntu/Debian/CentOS/RHEL)"
-        if len(updates) > 1:
-            return f"📦 Доступные обновления ОС (требуются права root):\n{len(updates)-1} пакетов\n" + "\n".join(updates[1:5]) + ("..." if len(updates) > 5 else "")
-        return "📦 Обновления ОС: все пакеты актуальны"
+        # Определяем дистрибутив Linux или тип UNIX
+        if "linux" in os_name:
+            # Проверяем наличие файлов или команд для определения дистрибутива
+            if os.path.exists("/etc/debian_version") or os.path.exists("/usr/bin/apt-get"):
+                # Debian/Ubuntu (APT)
+                subprocess.run(["apt-get", "update"], capture_output=True, text=True, check=True)
+                result = subprocess.run(["apt", "list", "--upgradable"], capture_output=True, text=True)
+                updates = result.stdout.splitlines()
+                if len(updates) > 1:
+                    try:
+                        subprocess.run(["sudo", "apt-get", "upgrade", "-y"], capture_output=True, text=True, check=True)
+                        return f"Обновления: установлено {len(updates)-1} пакетов (Debian/Ubuntu)"
+                    except subprocess.CalledProcessError:
+                        return f"Обновления: доступно {len(updates)-1} пакетов (нужен sudo для APT)"
+                return "Обновления: все пакеты актуальны (Debian/Ubuntu)"
+
+            elif os.path.exists("/etc/redhat-release") or os.path.exists("/usr/bin/dnf") or os.path.exists("/usr/bin/yum"):
+                # Fedora/CentOS/RHEL (DNF или YUM)
+                pkg_manager = "dnf" if os.path.exists("/usr/bin/dnf") else "yum"
+                result = subprocess.run([pkg_manager, "check-update"], capture_output=True, text=True)
+                updates = [line for line in result.stdout.splitlines() if line and not line.startswith(("Last", "Security"))]
+                if updates:
+                    try:
+                        subprocess.run(["sudo", pkg_manager, "upgrade", "-y"], capture_output=True, text=True, check=True)
+                        return f"Обновления: установлено {len(updates)} пакетов ({pkg_manager})"
+                    except subprocess.CalledProcessError:
+                        return f"Обновления: доступно {len(updates)} пакетов (нужен sudo для {pkg_manager})"
+                return f"Обновления: все пакеты актуальны ({pkg_manager})"
+
+            elif os.path.exists("/etc/arch-release") or os.path.exists("/usr/bin/pacman"):
+                # Arch Linux (Pacman)
+                result = subprocess.run(["pacman", "-Qu"], capture_output=True, text=True, check=True)
+                updates = result.stdout.splitlines()
+                if updates:
+                    try:
+                        subprocess.run(["sudo", "pacman", "-Syu", "--noconfirm"], capture_output=True, text=True, check=True)
+                        return f"Обновления: установлено {len(updates)} пакетов (Arch)"
+                    except subprocess.CalledProcessError:
+                        return f"Обновления: доступно {len(updates)} пакетов (нужен sudo для Pacman)"
+                return "Обновления: все пакеты актуальны (Arch)"
+
+            else:
+                return "Обновления: неизвестный дистрибутив Linux"
+
+        elif "darwin" in os_name:
+            # macOS (Homebrew)
+            if os.path.exists("/usr/local/bin/brew") or os.path.exists("/opt/homebrew/bin/brew"):
+                subprocess.run(["brew", "update"], capture_output=True, text=True, check=True)
+                result = subprocess.run(["brew", "outdated"], capture_output=True, text=True)
+                updates = result.stdout.splitlines()
+                if updates:
+                    try:
+                        subprocess.run(["brew", "upgrade"], capture_output=True, text=True, check=True)
+                        return f"Обновления: установлено {len(updates)} пакетов (Homebrew)"
+                    except subprocess.CalledProcessError:
+                        return f"Обновления: доступно {len(updates)} пакетов (ошибка Homebrew)"
+                return "Обновления: все пакеты актуальны (Homebrew)"
+            return "Обновления: Homebrew не установлен (macOS)"
+
+        elif "bsd" in os_name:
+            # FreeBSD (pkg)
+            if os.path.exists("/usr/sbin/pkg"):
+                result = subprocess.run(["pkg", "upgrade", "-n"], capture_output=True, text=True)
+                updates = result.stdout.splitlines()
+                if "0 packages" not in result.stdout:
+                    try:
+                        subprocess.run(["sudo", "pkg", "upgrade", "-y"], capture_output=True, text=True, check=True)
+                        return f"Обновления: установлены пакеты (FreeBSD)"
+                    except subprocess.CalledProcessError:
+                        return f"Обновления: доступны обновления (нужен sudo для pkg)"
+                return "Обновления: все пакеты актуальны (FreeBSD)"
+            return "Обновления: pkg не установлен (FreeBSD)"
+
+        return "Обновления: неподдерживаемая UNIX-система"
+
     except subprocess.CalledProcessError as e:
-        return f"📦 Обновления ОС: ошибка проверки ({e.stderr})"
-    except PermissionError:
-        return "📦 Обновления ОС: нет доступа (нужны права root)"
+        return f"Обновления: ошибка ({e.stderr})"
     except Exception as e:
-        return f"📦 Обновления ОС: непредвиденная ошибка ({e})"
+        return f"Обновления: ошибка ({e})"
+
+def get_bot_stats():
+    """Статистика бота"""
+    global message_count
+    try:
+        uptime = datetime.now() - data["start_time"]
+        return (f"🤖 Статистика:\n"
+                f"⏳ Время работы: {str(uptime).split('.')[0]}\n"
+                f"📨 Сообщений: {message_count}")
+    except Exception as e:
+        logger.error(f"Ошибка в статистике: {e}")
+        return "🤖 Статистика: ошибка вычисления"
 
 def get_info_menu():
+    """Меню выбора информации"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🖥 ЦП", callback_data="info_cpu")],
         [InlineKeyboardButton(text="💾 Память", callback_data="info_memory")],
         [InlineKeyboardButton(text="📀 Диск", callback_data="info_disk")],
-        [InlineKeyboardButton(text="🛠 Система", callback_data="info_system")],
+        [InlineKeyboardButton(text="🛠 Окружение", callback_data="info_system")],
         [InlineKeyboardButton(text="🌐 Сеть", callback_data="info_network")],
-        [InlineKeyboardButton(text="🌡️ Температура", callback_data="info_temp")],
-        [InlineKeyboardButton(text="⚙️ Процессы", callback_data="info_processes")],
-        [InlineKeyboardButton(text="🤖 Статистика", callback_data="info_botstats")],
-        [InlineKeyboardButton(text="📜 Логи", callback_data="info_logs?page=0")],
         [InlineKeyboardButton(text="📦 Обновления", callback_data="info_updates")],
-        [InlineKeyboardButton(text="🔁 Перезапустить", callback_data="info_restart")],
+        [InlineKeyboardButton(text="🤖 Статистика", callback_data="info_botstats")],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="info_refresh")]
     ])
-    return "📡 Выберите, что показать:", keyboard
+    return "📡 Выберите:", keyboard
 
 @router.message(Command("info"))
 async def info_command(message: types.Message):
+    """Обработчик команды /info"""
     global message_count
     message_count += 1
     if message.from_user.id not in data["admin_ids"]:
-        await message.answer("🚫 У вас нет доступа!")
+        await message.answer("🚫 Нет доступа!")
         logger.info(f"⛔ Доступ к /info запрещён для {message.from_user.id}")
         return
     
     text, keyboard = get_info_menu()
-    sent_message = await message.answer(text, reply_markup=keyboard)
-    save_info_message(message.chat.id, sent_message.message_id)
+    await message.answer(text, reply_markup=keyboard)
     logger.info(f"📌 Панель /info отправлена для {message.from_user.id}")
 
 @router.message(Command("botstats"))
 async def botstats_command(message: types.Message):
+    """Обработчик команды /botstats"""
     global message_count
     message_count += 1
     if message.from_user.id not in data["admin_ids"]:
-        await message.answer("🚫 У вас нет доступа!")
+        await message.answer("🚫 Нет доступа!")
         logger.info(f"⛔ Доступ к /botstats запрещён для {message.from_user.id}")
         return
     stats = get_bot_stats()
     await message.answer(stats)
-    logger.info(f"📊 Статистика бота отправлена для {message.from_user.id}")
-
-@router.message(Command("restartbot"))
-async def restart_command(message: types.Message):
-    global message_count
-    message_count += 1
-    if message.from_user.id not in data["admin_ids"]:
-        await message.answer("🚫 У вас нет доступа!")
-        logger.info(f"⛔ Доступ к /restartbot запрещён для {message.from_user.id}")
-        return
-    await message.answer("🔁 Бот перезапускается...")
-    logger.info("Перезапуск бота через /restartbot...")
-    sys.exit(0)
-
-@router.message(Command("resetstats"))
-async def reset_stats_command(message: types.Message):
-    global message_count
-    message_count += 1
-    if message.from_user.id not in data["admin_ids"]:
-        await message.answer("🚫 У вас нет доступа!")
-        logger.info(f"⛔ Доступ к /resetstats запрещён для {message.from_user.id}")
-        return
-    message_count = 0
-    await message.answer("🔄 Статистика сброшена!")
-    logger.info(f"📉 Статистика сброшена для {message.from_user.id}")
+    logger.info(f"📊 Статистика отправлена для {message.from_user.id}")
 
 @router.callback_query(lambda c: c.data.startswith("info_"))
 async def info_callback(callback: types.CallbackQuery):
+    """Обработчик callback-запросов"""
     global message_count
     message_count += 1
-    logger.info(f"📩 Получен callback: {callback.data} от {callback.from_user.id}")
+    logger.info(f"📩 Callback: {callback.data} от {callback.from_user.id}")
     if callback.from_user.id not in data["admin_ids"]:
-        await callback.answer("🚫 У вас нет доступа!")
+        await callback.answer("🚫 Нет доступа!")
         logger.info(f"⛔ Доступ запрещён для callback {callback.data} от {callback.from_user.id}")
         return
 
@@ -274,14 +278,10 @@ async def info_callback(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="🖥 ЦП", callback_data="info_cpu")],
         [InlineKeyboardButton(text="💾 Память", callback_data="info_memory")],
         [InlineKeyboardButton(text="📀 Диск", callback_data="info_disk")],
-        [InlineKeyboardButton(text="🛠 Система", callback_data="info_system")],
+        [InlineKeyboardButton(text="🛠 Окружение", callback_data="info_system")],
         [InlineKeyboardButton(text="🌐 Сеть", callback_data="info_network")],
-        [InlineKeyboardButton(text="🌡️ Температура", callback_data="info_temp")],
-        [InlineKeyboardButton(text="⚙️ Процессы", callback_data="info_processes")],
-        [InlineKeyboardButton(text="🤖 Статистика", callback_data="info_botstats")],
-        [InlineKeyboardButton(text="📜 Логи", callback_data="info_logs?page=0")],
         [InlineKeyboardButton(text="📦 Обновления", callback_data="info_updates")],
-        [InlineKeyboardButton(text="🔁 Перезапустить", callback_data="info_restart")],
+        [InlineKeyboardButton(text="🤖 Статистика", callback_data="info_botstats")],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="info_refresh")]
     ])
 
@@ -295,35 +295,10 @@ async def info_callback(callback: types.CallbackQuery):
         info = get_system_info()
     elif callback.data == "info_network":
         info = get_network_info()
-    elif callback.data == "info_temp":
-        info = get_temp_info()
-    elif callback.data == "info_processes":
-        info = get_processes_info()
-    elif callback.data == "info_botstats":
-        info = get_bot_stats()
-    elif callback.data.startswith("info_logs?page="):
-        page = int(callback.data.split("page=")[1])
-        logs, total_pages = get_system_logs(page)
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"info_logs?page={page-1}") if page > 0 else InlineKeyboardButton(text=" ", callback_data="noop"),
-             InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"info_logs?page={page+1}") if page < total_pages - 1 else InlineKeyboardButton(text=" ", callback_data="noop")],
-            [InlineKeyboardButton(text="Скачать логи", callback_data="info_download_logs")],
-            [InlineKeyboardButton(text="Назад в меню", callback_data="info_refresh")]
-        ])
-        info = logs
-    elif callback.data == "info_download_logs":
-        with open(LOG_FILE, "rb") as f:
-            await callback.message.reply_document(InputFile(f, filename="logs.txt"), caption="📑 Полные логи бота")
-        await callback.answer()
-        return
     elif callback.data == "info_updates":
         info = get_os_updates()
-    elif callback.data == "info_restart":
-        await callback.message.edit_text("🔁 Бот перезапускается...", reply_markup=None)
-        save_info_message(callback.message.chat.id, callback.message.message_id)
-        await callback.answer()  # Завершаем callback
-        logger.info("Перезапуск бота через callback info_restart...")
-        sys.exit(0)
+    elif callback.data == "info_botstats":
+        info = get_bot_stats()
     elif callback.data == "info_refresh":
         info = "🔄 Данные обновлены!"
 
@@ -332,26 +307,9 @@ async def info_callback(callback: types.CallbackQuery):
     logger.info(f"📤 Информация отправлена для {callback.from_user.id}")
 
 async def on_startup(d):
+    """Запуск модуля"""
     logger.info("🚀 Модуль InfoSystem запущен.")
-    asyncio.create_task(update_cache())       # Запускаем задачу кэширования здесь
-    asyncio.create_task(update_logs_cache())  # Запускаем задачу кэширования здесь
-    bot = d["bot"]
-    saved_message = load_info_message()
-    if saved_message:
-        try:
-            text, keyboard = get_info_menu()
-            await bot.edit_message_text(
-                chat_id=saved_message["chat_id"],
-                message_id=saved_message["message_id"],
-                text=f"✅ Бот перезапущен!\n\n{text}",
-                reply_markup=keyboard
-            )
-            logger.info(f"Обновлено сообщение {saved_message['message_id']} после перезапуска в /info")
-        except Exception as e:
-            logger.error(f"Ошибка обновления сообщения /info после перезапуска: {e}")
-            if "message to edit not found" in str(e):
-                os.remove(INFO_MESSAGE_FILE)
-                logger.info(f"Сброшено сохранённое сообщение /info из-за ошибки 'message to edit not found'")
 
 async def on_shutdown(d):
+    """Остановка модуля"""
     logger.info("📴 Модуль InfoSystem завершает работу.")
