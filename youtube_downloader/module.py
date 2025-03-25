@@ -17,7 +17,7 @@ router = Router()
 
 # Глобальные переменные
 _kernel_data = None
-DOWNLOAD_DIR = None
+MODULE_NAME = "youtube_downloader"  # Фиксированное имя модуля
 
 # Определение состояний FSM
 class YoutubeStates(StatesGroup):
@@ -48,31 +48,25 @@ USER_PARAMETERS = {
 
 def setup(kernel_data):
     """Инициализация модуля при загрузке."""
-    global _kernel_data, DOWNLOAD_DIR
+    global _kernel_data
     _kernel_data = kernel_data
     dp = kernel_data["dp"]
-    base_dir = kernel_data["base_dir"]
     dp.include_router(router)
-    
-    DOWNLOAD_DIR = os.path.join(base_dir, "data", "youtube_downloads")
-    if not os.path.exists(DOWNLOAD_DIR):
-        os.makedirs(DOWNLOAD_DIR)
-        logger.info(f"Создана папка для загрузок: {DOWNLOAD_DIR}")
     
     db = kernel_data.get("db")
     if db is None:
         logger.error("База данных не инициализирована в kernel_data['db']!")
         raise ValueError("База данных не инициализирована!")
     
+    base_dir = kernel_data.get("base_dir", os.path.expanduser("~/SwiftDevBot"))
     asyncio.create_task(init_db(db))
     init_config(base_dir)
     
-    logger.info(f"Модуль {DISPLAY_NAME} успешно загружен и настроен")
+    logger.info(f"Модуль {DISPLAY_NAME} успешно загружен и настроен с base_dir: {base_dir}")
 
 async def init_db(db):
     """Инициализация таблицы для хранения пользовательских настроек."""
-    module_name = __name__.split(".")[-2]
-    table_name = f"{module_name}_config"
+    table_name = f"{MODULE_NAME}_config"
     try:
         async with db.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}'") as cursor:
             if not await cursor.fetchone():
@@ -91,8 +85,7 @@ async def init_db(db):
 
 def init_config(base_dir):
     """Инициализация конфигурационного файла модуля."""
-    module_name = __name__.split(".")[-2]
-    config_path = os.path.join(base_dir, "modules", module_name, "config.json")
+    config_path = os.path.join(base_dir, "modules", MODULE_NAME, "config.json")
     try:
         if not os.path.exists(config_path):
             os.makedirs(os.path.dirname(config_path), exist_ok=True)
@@ -106,8 +99,7 @@ def init_config(base_dir):
 
 def load_config(base_dir):
     """Загрузка конфигурации модуля."""
-    module_name = __name__.split(".")[-2]
-    config_path = os.path.join(base_dir, "modules", module_name, "config.json")
+    config_path = os.path.join(base_dir, "modules", MODULE_NAME, "config.json")
     try:
         if os.path.exists(config_path):
             with open(config_path, "r", encoding="utf-8") as f:
@@ -122,14 +114,16 @@ async def get_user_config(db, user_id):
     if db is None:
         logger.error("База данных не инициализирована!")
         return {}
-    module_name = __name__.split(".")[-2]
-    table_name = f"{module_name}_config"
+    table_name = f"{MODULE_NAME}_config"
     try:
+        async with db.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}'") as cursor:
+            if not await cursor.fetchone():
+                await init_db(db)
         async with db.execute(f"SELECT default_format, default_quality FROM {table_name} WHERE user_id = ?", (user_id,)) as cursor:
             row = await cursor.fetchone()
-            if row and len(row) >= 2:  # Проверяем, что результат содержит оба значения
+            if row and len(row) >= 2:
                 return {"default_format": row[0], "default_quality": row[1]}
-            return {}  # Возвращаем пустой словарь, если данных нет
+            return {}
     except Exception as e:
         logger.error(f"Ошибка при получении настроек пользователя {user_id}: {e}")
         return {}
@@ -139,9 +133,11 @@ async def set_user_config(db, user_id, config):
     if db is None:
         logger.error("База данных не инициализирована!")
         return
-    module_name = __name__.split(".")[-2]
-    table_name = f"{module_name}_config"
+    table_name = f"{MODULE_NAME}_config"
     try:
+        async with db.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}'") as cursor:
+            if not await cursor.fetchone():
+                await init_db(db)
         if config is None:
             await db.execute(f"DELETE FROM {table_name} WHERE user_id = ?", (user_id,))
         else:
@@ -159,7 +155,7 @@ async def set_user_config(db, user_id, config):
 
 async def get_settings_menu(user_id, is_enabled, admin_ids, kernel_data):
     """Формирование меню настроек модуля."""
-    module_name = __name__.split(".")[-2]
+    base_dir = kernel_data.get("base_dir", os.path.expanduser("~/SwiftDevBot"))
     text = (f"📋 **{DISPLAY_NAME}** ({'🟢 Вкл' if is_enabled else '🔴 Выкл'})\n"
             f"📝 **Описание:** {DESCRIPTION}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -167,9 +163,8 @@ async def get_settings_menu(user_id, is_enabled, admin_ids, kernel_data):
     
     keyboard = []
     
-    # Глобальные параметры (для админов)
     if user_id in admin_ids:
-        global_config = load_config(kernel_data["base_dir"])
+        global_config = load_config(base_dir)
         for param, info in GLOBAL_PARAMETERS.items():
             value = global_config.get(param, info["default"])
             text += f"🔧 {info['description']}: **{value}**\n"
@@ -177,18 +172,17 @@ async def get_settings_menu(user_id, is_enabled, admin_ids, kernel_data):
         for param in GLOBAL_PARAMETERS:
             keyboard.append([types.InlineKeyboardButton(
                 text=f"🔧 Изменить {param}",
-                callback_data=f"set_global_{module_name}_{param}"
+                callback_data=f"set_global_{MODULE_NAME}_{param}"
             )])
         keyboard.append([types.InlineKeyboardButton(
             text=f"{'🔴 Выключить' if is_enabled else '🟢 Включить'}",
-            callback_data=f"toggle_{module_name}"
+            callback_data=f"toggle_{MODULE_NAME}"
         )])
         keyboard.append([types.InlineKeyboardButton(
             text="🗑️ Удалить модуль",
-            callback_data=f"delete_module_{module_name}"
+            callback_data=f"delete_module_{MODULE_NAME}"
         )])
 
-    # Пользовательские параметры
     user_config = await get_user_config(kernel_data["db"], user_id)
     for param, info in USER_PARAMETERS.items():
         value = user_config.get(param, info["default"])
@@ -197,12 +191,12 @@ async def get_settings_menu(user_id, is_enabled, admin_ids, kernel_data):
         emoji = "🎥" if param == "default_format" else "📐"
         keyboard.append([types.InlineKeyboardButton(
             text=f"{emoji} Изменить {param}",
-            callback_data=f"set_user_{module_name}_{param}"
+            callback_data=f"set_user_{MODULE_NAME}_{param}"
         )])
     if user_config:
         keyboard.append([types.InlineKeyboardButton(
             text="🗑️ Удалить мои настройки",
-            callback_data=f"delete_config_{module_name}"
+            callback_data=f"delete_config_{MODULE_NAME}"
         )])
     
     keyboard.append([types.InlineKeyboardButton(
@@ -214,17 +208,22 @@ async def get_settings_menu(user_id, is_enabled, admin_ids, kernel_data):
 
 async def download_file(url: str, format_type: str, quality: str = None) -> tuple[str, str]:
     """Скачивание файла с помощью yt-dlp."""
+    download_dir = os.path.join(os.path.expanduser("~"), "SwiftDevBot", "data", "youtube_downloads")
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir, exist_ok=True)
+        logger.info(f"Создана папка для загрузок: {download_dir}")
+    
     ydl_opts = {
-        "outtmpl": os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s"),
+        "outtmpl": os.path.join(download_dir, "%(title)s.%(ext)s"),
         "quiet": True,
         "noplaylist": True,
     }
     
     if format_type == "video":
-        ydl_opts["format"] = f"bestvideo[height<={quality}][filesize<50M]+bestaudio/best[filesize<50M]"
+        ydl_opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best"  # Убрали filesize<50M из формата
         ydl_opts["merge_output_format"] = "mp4"
     elif format_type == "audio":
-        ydl_opts["format"] = "bestaudio/best[filesize<50M]"
+        ydl_opts["format"] = "bestaudio/best"
         ydl_opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
@@ -233,7 +232,9 @@ async def download_file(url: str, format_type: str, quality: str = None) -> tupl
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(url, download=False)  # Сначала проверяем форматы
+            logger.info(f"Доступные форматы для {url}: {info.get('formats', [])}")
+            info = ydl.extract_info(url, download=True)  # Теперь скачиваем
             file_path = ydl.prepare_filename(info)
             if format_type == "audio":
                 file_path = file_path.rsplit(".", 1)[0] + ".mp3"
@@ -287,26 +288,31 @@ async def process_url(message: types.Message, url: str, state: FSMContext):
 @router.callback_query(lambda c: c.data.startswith("yt_"))
 async def process_selection(callback: types.CallbackQuery):
     """Обработка выбора формата и качества."""
-    data_parts = callback.data.split("_", 2)
-    action = data_parts[1]
-    url = data_parts[2]
+    parts = callback.data.split("_")
+    action = parts[1]
     user_id = callback.from_user.id
     
     user_config = await get_user_config(_kernel_data["db"], user_id)
     default_format = user_config.get("default_format", USER_PARAMETERS["default_format"]["default"])
     default_quality = user_config.get("default_quality", USER_PARAMETERS["default_quality"]["default"])
-    global_config = load_config(_kernel_data["base_dir"])
+    base_dir = _kernel_data.get("base_dir", os.path.expanduser("~/SwiftDevBot"))
+    global_config = load_config(base_dir)
     max_quality = global_config.get("max_quality", GLOBAL_PARAMETERS["max_quality"]["default"])
     
     if action == "default":
+        url = "_".join(parts[2:])
         format_type = default_format
         quality = default_quality if format_type == "video" else None
-        if format_type == "video" and int(quality) > int(max_quality):
+        # Исправление: убираем 'p' перед сравнением
+        quality_num = int(quality.rstrip("p")) if quality else 0
+        max_quality_num = int(max_quality.rstrip("p"))
+        if format_type == "video" and quality_num > max_quality_num:
             quality = max_quality
         await callback.message.edit_text(f"⏳ Скачиваю ({format_type}{' ' + quality + 'p' if quality else ''})...")
         await process_download(callback.message, url, format_type, quality)
     
     elif action == "video":
+        url = "_".join(parts[2:])
         keyboard = [
             [types.InlineKeyboardButton(text="360p", callback_data=f"yt_quality_360_{url}")],
             [types.InlineKeyboardButton(text="720p", callback_data=f"yt_quality_720_{url}")],
@@ -315,12 +321,17 @@ async def process_selection(callback: types.CallbackQuery):
         await callback.message.edit_text("Выберите качество видео:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
     
     elif action == "audio":
+        url = "_".join(parts[2:])
         await callback.message.edit_text("⏳ Скачиваю аудио...")
         await process_download(callback.message, url, "audio", None)
     
     elif action == "quality":
-        quality = data_parts[2]
-        if int(quality) > int(max_quality):
+        quality = parts[2]
+        url = "_".join(parts[3:])
+        # Исправление: убираем 'p' перед сравнением
+        quality_num = int(quality.rstrip("p"))
+        max_quality_num = int(max_quality.rstrip("p"))
+        if quality_num > max_quality_num:
             await callback.message.edit_text(f"❌ Качество {quality}p превышает максимальное ({max_quality}p).")
             return
         await callback.message.edit_text(f"⏳ Скачиваю видео ({quality}p)...")
