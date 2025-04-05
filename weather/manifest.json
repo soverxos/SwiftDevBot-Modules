@@ -2,7 +2,7 @@
     "name": "weather",
     "display_name": "Прогноз погоды",
     "version": "1.0.0",
-    "description": "Подробный прогноз погоды с множеством настроек и уведомлениями",
+    "description": "1Подробный прогноз погоды с множеством настроек и уведомлениями",
     "author": "SwiftDevBot Team",
     "dependencies": [
       "aiohttp>=3.8.0",
