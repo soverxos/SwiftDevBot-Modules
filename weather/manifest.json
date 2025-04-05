@@ -1,4 +1,75 @@
 {
-    "name": "🌦 Погода",
-    "description": "Показывает погоду в вашем городе!"
-}
+    "name": "weather",
+    "display_name": "Прогноз погоды",
+    "version": "1.0.0",
+    "description": "Подробный прогноз погоды с множеством настроек и уведомлениями",
+    "author": "SwiftDevBot Team",
+    "dependencies": [
+      "aiohttp>=3.8.0",
+      "matplotlib>=3.5.0"
+    ],
+    "commands": [
+      {
+        "command": "weather",
+        "description": "Прогноз погоды",
+        "icon": "🌤️",
+        "category": "Utility",
+        "admin": false
+      }
+    ],
+    "settings": {
+      "api_key": {
+        "type": "string",
+        "default": "",
+        "description": "API ключ OpenWeatherMap",
+        "required": true
+      },
+      "units": {
+        "type": "choice",
+        "options": ["metric", "imperial"],
+        "default": "metric",
+        "description": "Единицы измерения (metric - °C, км/ч; imperial - °F, миль/ч)"
+      },
+      "time_format": {
+        "type": "choice", 
+        "options": ["12h", "24h"], 
+        "default": "24h",
+        "description": "Формат времени (12/24 часа)"
+      },
+      "language": {
+        "type": "choice",
+        "options": ["ru", "en", "de", "fr", "es"],
+        "default": "ru",
+        "description": "Язык прогноза погоды"
+      },
+      "forecast_days": {
+        "type": "int",
+        "default": 5,
+        "min": 1,
+        "max": 7,
+        "description": "Количество дней прогноза"
+      },
+      "notifications_enabled": {
+        "type": "bool",
+        "default": false,
+        "description": "Включить уведомления о погоде"
+      },
+      "notification_time": {
+        "type": "string",
+        "default": "08:00",
+        "description": "Время ежедневного уведомления (формат HH:MM)"
+      }
+    },
+    "languages": ["ru", "en"],
+    "background_tasks": {
+      "enabled": true,
+      "description": "Отправляет уведомления о погоде в указанное время"
+    },
+    "enabled_by_default": true,
+    "metadata": {
+      "homepage": "https://openweathermap.org",
+      "license": "MIT",
+      "tags": ["weather", "forecast", "utility"],
+      "min_core_version": "1.0.0"
+    }
+  }
