@@ -1,0 +1,28 @@
+{
+    "name": "module_manager",
+    "version": "1.0.0",
+    "description": "Управление модулями и репозиториями модулей",
+    "author": "SwiftDevBot Team",
+    "priority": 50,
+    "permissions": ["admin"],
+    "access_level": "private",
+    "commands": [
+      {
+        "name": "repos",
+        "description": "Управление репозиториями модулей",
+        "is_admin": true
+      },
+      {
+        "name": "modules",
+        "description": "Доступные модули из репозитория",
+        "is_admin": true
+      },
+      {
+        "name": "install",
+        "description": "Установка модуля из репозитория",
+        "is_admin": true
+      }
+    ],
+    "dependencies": []
+  }
+  
