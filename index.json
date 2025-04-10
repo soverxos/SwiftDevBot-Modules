@@ -1,0 +1,28 @@
+{
+  "type": "swiftdevbot-repository",
+  "name": "SwiftDevBot Modules Repository",
+  "description": "Репозиторий модулей для расширения функциональности SwiftDevBot",
+  "maintainer": "SoverX",
+  "contact": "https://t.me/soverx_official_group",
+  "url": "https://github.com/soverxos/SwiftDevBot-Modules",
+  "logo": "https://raw.githubusercontent.com/soverxos/SwiftDevBot-Modules/main/assets/logo.png",
+  "compatible_with": {
+    "min_version": "1.0.0",
+    "max_version": "2.0.0"
+  },
+  "last_updated": "2025-04-15T12:00:00Z",
+  "categories": [
+    "utility",
+    "entertainment",
+    "administration",
+    "social",
+    "tools"
+  ],
+  "recommended_modules": [
+    "weather",
+    "translator",
+    "reminder"
+  ],
+  "repository_version": "1.0.0",
+  "notes": "Официальный репозиторий модулей для SwiftDevBot. Для добавления своего модуля в репозиторий, создайте pull request."
+}
