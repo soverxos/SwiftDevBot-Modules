@@ -80,20 +80,20 @@
 ## 📁 Структура Проекта
 
 
-SwiftDevBot/
-├── core/ # Ядро бота (основные классы и менеджеры)
-│ ├── utils/ # Вспомогательные утилиты ядра (БД, шифрование, медиа и т.д.)
-│ ├── init.py
-│ ├── bot.py # Основной класс SwiftDevBot
-│ ├── config.py # Конфигурация Pydantic
-│ ├── event_bus.py # Шина событий
-│ ├── exceptions.py # Пользовательские исключения
-│ ├── handlers.py # Базовые обработчики (/start, /menu, /help)
-│ ├── menu_manager.py # Управление меню
-│ ├── module_interface.py # Интерфейс для модулей
-│ ├── module_manager.py # Загрузка и управление модулями
-│ ├── permission_manager.py # Управление правами доступа
-│ └── session_manager.py # Управление сессиями (не FSM)
+#SwiftDevBot/
+#├── core/ # Ядро бота (основные классы и менеджеры)
+#│ ├── utils/ # Вспомогательные утилиты ядра (БД, шифрование, медиа и т.д.)
+#│ ├── init.py
+#│ ├── bot.py # Основной класс SwiftDevBot
+#│ ├── config.py # Конфигурация Pydantic
+#│ ├── event_bus.py # Шина событий
+#│ ├── exceptions.py # Пользовательские исключения
+#│ ├── handlers.py # Базовые обработчики (/start, /menu, /help)
+#│ ├── menu_manager.py # Управление меню
+#│ ├── module_interface.py # Интерфейс для модулей
+#│ ├── module_manager.py # Загрузка и управление модулями
+#│ ├── permission_manager.py # Управление правами доступа
+#│ └── session_manager.py # Управление сессиями (не FSM)
 ├── modules/ # Пользовательские модули функциональности
 │ └── administrator/ # Пример: Модуль администрирования
 │ ├── manifest.json
